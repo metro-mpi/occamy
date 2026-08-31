@@ -13,3 +13,24 @@ modelsim.ini
 transcript
 
 gmon.out
+
+# ---- Metro-MPI partition flow: generated artifacts (do not commit) --------
+# Hierarchy dumps from --mmpi-out: tens of MB, fully regeneratable via
+# `make partition`/`make partition-sw` (see GETTING_STARTED.md).
+occamy_design.json
+target/sim/design.json
+target/sim/sw_design.json
+
+# Build/work directories created by Makefile targets (rtl/flist/partition/
+# build-*/run-*) and by the plain (non-partitioned) Verilator build --
+# multi-GB, machine- and run-specific, fully regeneratable.
+target/sim/work-vlt/
+target/sim/work-mmpi-*/
+target/sim/bin/
+target/sim/logs/
+target/sim/uart0.log
+target/sim/.rtlbinary
+target/sim/*.dasm
+target/sim/mono_t.txt
+target/sim/mpi_t.txt
+target/sim/sw/host/apps/custom_test/

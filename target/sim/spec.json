@@ -1,0 +1,10 @@
+{
+  "schema_version": 2,
+  "rank0": "system",
+  "ranks": [
+    {"rank": 1, "instances": ["$root.occamy_quadrant_s1.i_occamy_cluster_0"]},
+    {"rank": 2, "instances": ["$root.occamy_quadrant_s1.i_occamy_cluster_1"]},
+    {"rank": 3, "instances": ["$root.occamy_quadrant_s1.i_occamy_cluster_2"]},
+    {"rank": 4, "instances": ["$root.occamy_quadrant_s1.i_occamy_cluster_3"]}
+  ]
+}

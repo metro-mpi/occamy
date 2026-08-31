@@ -562,4 +562,85 @@ help:
 	@echo -e ""
 	@echo -e "Additional useful targets from the included Makefrag:"
 	@echo -e "${Blue}traces         ${Black}Generate the better readable traces in .logs/trace_hart_<hart_id>.txt with spike-dasm."
+	@echo -e "${Blue}bin/$(TARGET).vlt  ${Black}Build the fesvr/HTIF Verilator simulator (top=testharness) that loads+runs ELFs."
+
+#############
+# Verilator #   (native, non-Docker, for the custom MPI Verilator fork)
+#############
+# Produces bin/occamy_top.vlt: a fesvr/HTIF-backed simulator (top=testharness)
+# that LOADS and RUNS RISC-V ELFs. Mirrors snitch_cluster's .vlt target with
+# Occamy adaptations: --timing, UART DPI, bootdata from test/, mpic++ + -lsodium.
+
+# Occamy bender targets (mirror VSIM_BENDER), appended to common.mk's VLT_BENDER base
+VLT_BENDER += -t cv64a6_imafdc_sv39 -t occamy_sim -t snitch_cluster
+
+# The custom verilator prints an "argString" preamble on stdout; take the LAST
+# non-empty line of --getenv so VLT_ROOT is the real share/verilator dir.
+override VLT_ROOT := $(shell verilator --getenv VERILATOR_ROOT 2>/dev/null | awk 'NF{line=$$0} END{print line}')
+
+# testharness uses #delay -> needs --timing; the generated soc_ctrl/clint/plic
+# copies duplicate the bender originals -> silence MODDUP/PINMISSING/IMPLICITSTATIC.
+VLT_FLAGS += --timing -Wno-MODDUP -Wno-PINMISSING -Wno-IMPLICITSTATIC
+
+# RAM here is ~15 GB; cap parallel verilated C++ compiles to avoid OOM.
+VLT_JOBS   ?= 4
+VLT_LINKER ?= mpic++
+
+VLT_AR = $(VLT_BUILDDIR)/Vtestharness__ALL.a
+
+# TB object set: verilator_lib (not rtl_lib) + Occamy UART DPI + bootdata
+VLT_COBJ  = $(VLT_BUILDDIR)/tb/bootrom.o
+VLT_COBJ += $(VLT_BUILDDIR)/tb/ipc.o
+VLT_COBJ += $(VLT_BUILDDIR)/tb/common_lib.o
+VLT_COBJ += $(VLT_BUILDDIR)/tb/verilator_lib.o
+VLT_COBJ += $(VLT_BUILDDIR)/tb/tb_bin.o
+VLT_COBJ += $(VLT_BUILDDIR)/tb/bootdata.o
+VLT_COBJ += $(VLT_BUILDDIR)/tb/uartdpi.o
+VLT_COBJ += $(VLT_BUILDDIR)/vlt/verilated.o
+VLT_COBJ += $(VLT_BUILDDIR)/vlt/verilated_dpi.o
+VLT_COBJ += $(VLT_BUILDDIR)/vlt/verilated_vcd_c.o
+VLT_COBJ += $(VLT_BUILDDIR)/vlt/verilated_threads.o
+VLT_COBJ += $(VLT_BUILDDIR)/vlt/verilated_timing.o
+
+# c++20 + coroutines for the TB (verilated_timing needs std::coroutine_handle);
+# reuse common.mk's include set (VLT_CFLAGS) then override the std. uartdpi.c is C.
+VLT_TB_CXXFLAGS  = $(VLT_CFLAGS) -std=gnu++20 -fcoroutines -I$(TARGET_TEST_DIR)/uartdpi
+VLT_TB_CFLAGS_C  = -I$(VLT_BUILDDIR) -I$(VLT_ROOT)/include -I$(VLT_ROOT)/include/vltstd
+VLT_TB_CFLAGS_C += -I$(TARGET_TEST_DIR)/uartdpi -I$(TB_DIR)
+
+$(VLT_AR): $(TARGET_TEST_DIR)/testharness.sv $(TARGET_TEST_DIR)/bootdata.cc
+	mkdir -p $(VLT_BUILDDIR)
+	$(BENDER) script verilator $(VLT_BENDER) > $(VLT_BUILDDIR)/files
+	$(VLT) --Mdir $(VLT_BUILDDIR) -f $(VLT_BUILDDIR)/files $(VLT_FLAGS) \
+		-j $(VLT_JOBS) --cc --build --top-module testharness
+	touch $@
+verilate-vlt: $(VLT_AR)
+
+# Snitch common TB .cc (verilator_lib, tb_bin, common_lib, bootrom, ipc)
+$(VLT_BUILDDIR)/tb/%.o: $(TB_DIR)/%.cc $(VLT_AR) $(VLT_BUILDDIR)/lib/libfesvr.a
+	mkdir -p $(dir $@)
+	$(CXX) $(VLT_TB_CXXFLAGS) -c $< -o $@
+# Occamy-generated bootdata.cc lives in test/, not generated/
+$(VLT_BUILDDIR)/tb/bootdata.o: $(TARGET_TEST_DIR)/bootdata.cc $(VLT_AR) $(VLT_BUILDDIR)/lib/libfesvr.a
+	mkdir -p $(dir $@)
+	$(CXX) $(VLT_TB_CXXFLAGS) -c $< -o $@
+# UART DPI is a C source; compile with the C compiler to keep DPI C linkage.
+$(VLT_BUILDDIR)/tb/uartdpi.o: $(TARGET_TEST_DIR)/uartdpi/uartdpi.c $(VLT_AR)
+	mkdir -p $(dir $@)
+	$(CC) $(VLT_TB_CFLAGS_C) -c $< -o $@
+# Verilated runtime objects (incl. timing + threads for --timing/coroutines)
+$(VLT_BUILDDIR)/vlt/%.o: $(VLT_ROOT)/include/%.cpp
+	mkdir -p $(dir $@)
+	$(CXX) $(VLT_TB_CXXFLAGS) -c $< -o $@
+
+# Final fesvr-linked simulator; mpic++ + -lsodium for the fork's archive.
+$(BIN_DIR)/$(TARGET).vlt: $(VLT_AR) $(VLT_COBJ) $(VLT_BUILDDIR)/lib/libfesvr.a $(TARGET_TEST_DIR)/bootrom.bin
+	mkdir -p $(dir $@)
+	$(VLT_LINKER) $(LDFLAGS) -std=gnu++20 -L $(VLT_BUILDDIR)/lib -o $@ \
+		$(VLT_COBJ) $(VLT_AR) -lfesvr -lpthread -lsodium
+
+.PHONY: clean-vlt verilate-vlt
+clean-vlt: clean-work
+	rm -rf $(VLT_BUILDDIR)
+	rm -f $(BIN_DIR)/$(TARGET).vlt
 	@echo -e "${Blue}annotate       ${Black}Annotate the better readable traces in .logs/trace_hart_<hart_id>.s with the source code related with the retired instructions."
