@@ -1,0 +1,198 @@
+{
+  "schema_version": 2,
+  "rank0": "system",
+  "ranks": [
+    {
+      "rank": 1,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_0"
+      ]
+    },
+    {
+      "rank": 2,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_1"
+      ]
+    },
+    {
+      "rank": 3,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_2"
+      ]
+    },
+    {
+      "rank": 4,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_3"
+      ]
+    },
+    {
+      "rank": 5,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_4"
+      ]
+    },
+    {
+      "rank": 6,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_5"
+      ]
+    },
+    {
+      "rank": 7,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_6"
+      ]
+    },
+    {
+      "rank": 8,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_7"
+      ]
+    },
+    {
+      "rank": 9,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_8"
+      ]
+    },
+    {
+      "rank": 10,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_9"
+      ]
+    },
+    {
+      "rank": 11,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_10"
+      ]
+    },
+    {
+      "rank": 12,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_11"
+      ]
+    },
+    {
+      "rank": 13,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_12"
+      ]
+    },
+    {
+      "rank": 14,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_13"
+      ]
+    },
+    {
+      "rank": 15,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_14"
+      ]
+    },
+    {
+      "rank": 16,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_15"
+      ]
+    },
+    {
+      "rank": 17,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_16"
+      ]
+    },
+    {
+      "rank": 18,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_17"
+      ]
+    },
+    {
+      "rank": 19,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_18"
+      ]
+    },
+    {
+      "rank": 20,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_19"
+      ]
+    },
+    {
+      "rank": 21,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_20"
+      ]
+    },
+    {
+      "rank": 22,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_21"
+      ]
+    },
+    {
+      "rank": 23,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_22"
+      ]
+    },
+    {
+      "rank": 24,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_23"
+      ]
+    },
+    {
+      "rank": 25,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_24"
+      ]
+    },
+    {
+      "rank": 26,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_25"
+      ]
+    },
+    {
+      "rank": 27,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_26"
+      ]
+    },
+    {
+      "rank": 28,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_27"
+      ]
+    },
+    {
+      "rank": 29,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_28"
+      ]
+    },
+    {
+      "rank": 30,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_29"
+      ]
+    },
+    {
+      "rank": 31,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_30"
+      ]
+    },
+    {
+      "rank": 32,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_31"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "rank0": "system",
+  "ranks": [
+    {
+      "rank": 1,
+      "instances": [
+        "$root.testharness.i_occamy.i_occamy_soc.i_occamy_quadrant_s1_0.i_occamy_cluster_0"
+      ]
+    }
+  ]
+}

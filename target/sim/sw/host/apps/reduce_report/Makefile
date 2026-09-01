@@ -1,8 +1,6 @@
-# Copyright 2023 ETH Zurich and University of Bologna.
+# Copyright 2026, GSoC Metro-MPI investigation.
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Luca Colagrande <colluca@iis.ee.ethz.ch>
 
 ######################
 # Invocation options #
@@ -14,11 +12,9 @@ DEBUG ?= OFF # ON to turn on debugging symbols
 # Build variables #
 ###################
 
-APP  = offload
-SRCS = src/offload.c
-DEVICE_APPS  = blas/axpy
-DEVICE_APPS += blas/gemm
-DEVICE_APPS += reduce
+APP  = reduce_report
+SRCS = src/reduce_report.c
+DEVICE_APPS = reduce
 
 include ../../toolchain.mk
 
@@ -65,7 +61,6 @@ finalize-build: $(FINAL_OUTPUTS)
 .PHONY: clean
 clean:
 	rm -rf $(BUILDDIR)
-	rm -f $(OFFSET_LD)
 
 $(BUILDDIR):
 	mkdir -p $@
@@ -92,12 +87,6 @@ $(DEVICE_DIR)/apps/%/build/origin.ld: $(PARTIAL_ELF) | $(DEVICE_DIR)/apps/%/buil
 	echo "Writing device object relocation address 0x$$RELOC_ADDR to $@"; \
 	echo "L3_ORIGIN = 0x$$RELOC_ADDR;" > $@
 
-# Generates a rule which looks somewhat like:
-#
-# $(BUILDDIR)/$(APP)-%.elf: $(DEVICE_DIR)/apps/%/build/%.bin $(DEP) $(LD_SRCS) | $(BUILDDIR)
-# 	$(RISCV_CC) $(RISCV_CFLAGS) -DDEVICEBIN=\"$<\" $(RISCV_LDFLAGS) $(SRCS) -o $@
-#
-# This approach is required cause you can't use multiple %-signs in a prerequisite
 define elf_rule_template =
     $$(BUILDDIR)/$$(APP)-$(notdir $(1)).elf: $$(DEVICE_DIR)/apps/$(1)/build/$(notdir $(1)).bin $$(DEP) $$(LD_SRCS) | $$(BUILDDIR)
 		$$(RISCV_CC) $$(RISCV_CFLAGS) -DDEVICEBIN=\"$$<\" $$(RISCV_LDFLAGS) $$(SRCS) -o $$@

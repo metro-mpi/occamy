@@ -14,11 +14,9 @@ DEBUG ?= OFF # ON to turn on debugging symbols
 # Build variables #
 ###################
 
-APP  = offload
+APP  = bisect3
 SRCS = src/offload.c
-DEVICE_APPS  = blas/axpy
-DEVICE_APPS += blas/gemm
-DEVICE_APPS += reduce
+DEVICE_APPS = reduce
 
 include ../../toolchain.mk
 

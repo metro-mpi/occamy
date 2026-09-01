@@ -25,6 +25,7 @@ target/sim/sw_design.json
 # build-*/run-*) and by the plain (non-partitioned) Verilator build --
 # multi-GB, machine- and run-specific, fully regeneratable.
 target/sim/work-vlt/
+target/sim/work-vlt-partition/
 target/sim/work-mmpi-*/
 target/sim/bin/
 target/sim/logs/

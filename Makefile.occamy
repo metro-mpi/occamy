@@ -1,0 +1,389 @@
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
+.ONESHELL:
+
+GSOC ?= /home/kislay/Documents/gsoc
+OCCAMY ?= $(GSOC)/occamy
+SIM ?= $(OCCAMY)/target/sim
+
+VLT ?= $(GSOC)/verilator-dev/verilator-private/verilator-install/bin/verilator
+BENDER ?= $(GSOC)/.codex-tools/bin/bender
+VENV_BIN ?= $(GSOC)/.codex-venvs/occamy/bin
+
+export PATH := $(dir $(VLT)):$(VENV_BIN):$(dir $(BENDER)):$(PATH)
+export CCACHE_DISABLE := 1
+export OBJCACHE :=
+export CFG_CXXFLAGS_PCH := -c -x c++-header
+unexport VERILATOR_ROOT
+
+VLT_ROOT := $(shell $(VLT) --getenv VERILATOR_ROOT 2>/dev/null | awk 'NF{line=$$0} END{print line}')
+TB_DIR := $(shell find $(OCCAMY)/.bender/git/checkouts -path '*/target/common/test' -type d | head -n 1)
+TB_BIN := $(TB_DIR)/tb_bin.cc
+RANK0_TB_MAIN ?= $(OCCAMY)/rank0_tb_main.cc
+
+VLT_JOBS ?= 4
+BUILD_JOBS ?= 6
+SMOKE_CYCLES ?= 20
+MPI_CYCLES ?= 20
+SMOKE_TIMEOUT ?= 300
+HELLO_TIMEOUT ?= 1200
+MPI_HELLO_TIMEOUT ?= 1800
+
+DEFAULT_CFG ?= cfg/single-cluster.hjson
+MPI_CFG ?= cfg/mmpi-1x4.hjson
+HELLO_ELF := $(SIM)/sw/host/apps/hello_world/build/hello_world.part.elf
+
+SMOKE_DIR := $(SIM)/work/occamy_smoke_vlt
+SMOKE_EXE := $(SMOKE_DIR)/Vtestharness_smoke
+
+AUTO_STRUCT_DIR := $(SIM)/work-mmpi-1x4-partition
+AUTO_SW_DIR := $(SIM)/work-mmpi-sw-auto
+MANUAL_STRUCT_VIEW_DIR := $(SIM)/work-mmpi-view
+MANUAL_STRUCT_IMPORT_DIR := $(SIM)/work-mmpi-import
+MANUAL_SW_VIEW_DIR := $(SIM)/work-mmpi-sw-view
+MANUAL_SW_IMPORT_DIR := $(SIM)/work-mmpi-sw-import
+
+WARN := -Wno-BLKANDNBLK -Wno-LITENDIAN -Wno-CASEINCOMPLETE -Wno-CMPCONST \
+        -Wno-WIDTH -Wno-WIDTHCONCAT -Wno-UNSIGNED -Wno-UNOPTFLAT \
+        -Wno-MODDUP -Wno-PINMISSING -Wno-IMPLICITSTATIC -Wno-ALWCOMBORDER \
+        -Wno-SYMRSVDWORD -Wno-LATCH -Wno-COMBDLY -Wno-SHORTREAL -Wno-fatal
+
+.PHONY: help verify-now \
+        default-build mpi-software-build default-smoke default-hello \
+        auto-smoke-generate auto-smoke-build auto-smoke-run auto-smoke \
+        auto-hello-generate auto-hello-build auto-hello-run-only auto-hello-run auto-hello \
+        manual-smoke-export manual-smoke-import manual-smoke \
+        manual-hello-export manual-hello-import manual-hello-build \
+        manual-hello-run-only manual-hello-run manual-hello \
+        hello-elf check-tools
+
+help:
+	@echo "Occamy/Metro-MPI test targets:"
+	@echo "  make -f Makefile.occamy verify-now"
+	@echo "      Runs default-smoke, default-hello, auto-smoke, auto-hello."
+	@echo "      Does not run the --mmpi-out/--mmpi-in targets."
+	@echo
+	@echo "  make -f Makefile.occamy default-smoke"
+	@echo "  make -f Makefile.occamy default-hello"
+	@echo "  make -f Makefile.occamy auto-smoke"
+	@echo "  make -f Makefile.occamy auto-hello"
+	@echo
+	@echo "Manual partition flow targets:"
+	@echo "  make -f Makefile.occamy manual-smoke-export"
+	@echo "  # create $(SIM)/spec.json from $(SIM)/design.json, then:"
+	@echo "  make -f Makefile.occamy manual-smoke-import manual-smoke"
+	@echo
+	@echo "  make -f Makefile.occamy manual-hello-export"
+	@echo "  # create $(SIM)/sw_spec.json from $(SIM)/sw_design.json, then:"
+	@echo "  make -f Makefile.occamy manual-hello-import manual-hello"
+
+check-tools:
+	test -x "$(VLT)"
+	test -x "$(BENDER)"
+	test -n "$(VLT_ROOT)"
+	test -d "$(TB_DIR)"
+
+verify-now: default-smoke default-hello auto-smoke auto-hello
+
+default-build: check-tools
+	$(MAKE) -C "$(SIM)" BENDER="$(BENDER)" VLT="$(VLT)" VERIBLE_FMT=true \
+	    CFG_OVERRIDE="$(DEFAULT_CFG)" VLT_JOBS="$(VLT_JOBS)" \
+	    CFG_CXXFLAGS_PCH="-c -x c++-header" bin/occamy_top.vlt
+
+mpi-software-build: check-tools
+	$(MAKE) -C "$(OCCAMY)" OCCAMY="$(OCCAMY)" VLT="$(VLT)" BENDER="$(BENDER)" \
+	    CFG_NAME="$(basename $(notdir $(MPI_CFG)))" rtl flist
+	$(MAKE) -C "$(SIM)" BENDER="$(BENDER)" VLT="$(VLT)" VERIBLE_FMT=true \
+	    CFG_OVERRIDE="$(MPI_CFG)" VLT_JOBS="$(VLT_JOBS)" \
+	    CFG_CXXFLAGS_PCH="-c -x c++-header" bin/occamy_top.vlt
+
+hello-elf:
+	$(MAKE) -C "$(SIM)/sw/host/apps/hello_world" DEBUG=ON partial-build
+	test -f "$(HELLO_ELF)"
+
+$(SMOKE_DIR)/sim_main.cpp:
+	mkdir -p "$(SMOKE_DIR)"
+	cat > "$@" <<'CPP'
+	#include "Vtestharness.h"
+	#include "verilated.h"
+	
+	#include <cstdlib>
+	
+	int main(int argc, char** argv) {
+	    VerilatedContext context;
+	    context.commandArgs(argc, argv);
+	
+	    Vtestharness top{&context};
+	    const char* cycles_env = std::getenv("OCCAMY_SMOKE_CYCLES");
+	    const vluint64_t cycles = cycles_env ? std::strtoull(cycles_env, nullptr, 0) : 20;
+	
+	    top.clk_i = 0;
+	    top.rst_ni = 0;
+	
+	    for (vluint64_t cycle = 0; cycle < cycles && !context.gotFinish(); ++cycle) {
+	        top.rst_ni = cycle >= 5;
+	
+	        top.clk_i = 0;
+	        top.eval();
+	        context.timeInc(5);
+	
+	        top.clk_i = 1;
+	        top.eval();
+	        context.timeInc(5);
+	    }
+	
+	    top.final();
+	    return 0;
+	}
+	CPP
+
+$(SMOKE_DIR)/smoke_dpi.cpp:
+	mkdir -p "$(SMOKE_DIR)"
+	cat > "$@" <<'CPP'
+	#include "svdpi.h"
+	
+	#include <cstring>
+	
+	extern "C" void tb_memory_read(long long, int len, const svOpenArrayHandle data) {
+	    void* ptr = svGetArrayPtr(data);
+	    if (ptr != nullptr) {
+	        std::memset(ptr, 0, static_cast<size_t>(len));
+	    }
+	}
+	
+	extern "C" void tb_memory_write(long long, int, const svOpenArrayHandle, const svOpenArrayHandle) {}
+	extern "C" void* uartdpi_create(const char*, const char*) { return nullptr; }
+	extern "C" void uartdpi_close(void*) {}
+	extern "C" int uartdpi_can_read(void*) { return 0; }
+	extern "C" char uartdpi_read(void*) { return 0; }
+	extern "C" void uartdpi_write(void*, int) {}
+	CPP
+
+$(SMOKE_EXE): default-build $(SMOKE_DIR)/sim_main.cpp $(SMOKE_DIR)/smoke_dpi.cpp
+	mpic++ -std=gnu++20 -fcoroutines -pthread \
+	    -I"$(SIM)/work-vlt" -I"$(VLT_ROOT)/include" -I"$(VLT_ROOT)/include/vltstd" \
+	    "$(SMOKE_DIR)/sim_main.cpp" "$(SMOKE_DIR)/smoke_dpi.cpp" \
+	    "$(SIM)/work-vlt/Vtestharness__ALL.a" \
+	    "$(SIM)/work-vlt/vlt/verilated.o" \
+	    "$(SIM)/work-vlt/vlt/verilated_dpi.o" \
+	    "$(SIM)/work-vlt/vlt/verilated_threads.o" \
+	    "$(SIM)/work-vlt/vlt/verilated_timing.o" \
+	    "$(SIM)/work-vlt/vlt/verilated_vcd_c.o" \
+	    -o "$@"
+
+default-smoke: $(SMOKE_EXE)
+	cd "$(SIM)"
+	mkdir -p logs
+	timeout "$(SMOKE_TIMEOUT)" env OCCAMY_SMOKE_CYCLES="$(SMOKE_CYCLES)" "$(SMOKE_EXE)" \
+	    2>&1 | tee "$(SMOKE_DIR)/smoke.log"
+	test "$${PIPESTATUS[0]}" -eq 0
+	echo "[ok] default smoke ran $(SMOKE_CYCLES) cycles"
+
+default-hello: default-build hello-elf
+	cd "$(SIM)"
+	rm -f uart0.log
+	timeout "$(HELLO_TIMEOUT)" ./bin/occamy_top.vlt "$(HELLO_ELF)" \
+	    2>&1 | tee default_hello.log
+	test "$${PIPESTATUS[0]}" -eq 0
+	grep -q "Hello world!" uart0.log
+	echo "[ok] default hello_world completed"
+
+auto-smoke-generate: check-tools
+	$(MAKE) -C "$(OCCAMY)" OCCAMY="$(OCCAMY)" VLT="$(VLT)" BENDER="$(BENDER)" partition
+	grep -E "Found 4 partition instances of module 'occamy_cluster_wrapper'" \
+	    "$(AUTO_STRUCT_DIR)/partition.log"
+
+auto-smoke-build: auto-smoke-generate
+	$(MAKE) -C "$(OCCAMY)" OCCAMY="$(OCCAMY)" VLT="$(VLT)" BENDER="$(BENDER)" OBJCACHE= \
+	    CFG_CXXFLAGS_PCH="-c -x c++-header" build-mpi
+
+auto-smoke-run: auto-smoke-build
+	$(MAKE) -C "$(OCCAMY)" OCCAMY="$(OCCAMY)" VLT="$(VLT)" BENDER="$(BENDER)" run-mpi \
+	    OCCAMY_MPI_CYCLES="$(MPI_CYCLES)"
+	test -f "$(AUTO_STRUCT_DIR)/metro_mpi/simulate.log"
+	grep -Eq "Shutting down|Ending Communication|Broadcasting shutdown" \
+	    "$(AUTO_STRUCT_DIR)/metro_mpi/simulate.log"
+	echo "[ok] automatic Metro-MPI structural run completed $(MPI_CYCLES) cycles"
+
+auto-smoke: auto-smoke-run
+
+auto-hello-generate: mpi-software-build hello-elf
+	mkdir -p "$(AUTO_SW_DIR)"
+	cd "$(AUTO_SW_DIR)"
+	"$(VLT)" --cc --mmpi-o1 --d1 --top-module testharness \
+	    --mmpi-partition-module occamy_cluster_wrapper \
+	    -exe "$(TB_BIN)" -f ../work-vlt/files \
+	    --timing --unroll-count 1024 --Mdir Vmdir $(WARN) \
+	    2>&1 | tee partition.log
+	test "$${PIPESTATUS[0]}" -eq 0
+	grep -E "Found 4 partition instances of module 'occamy_cluster_wrapper'" partition.log
+
+auto-hello-build: auto-hello-generate
+	cd "$(AUTO_SW_DIR)"
+	"$(VLT)" --Mdir Vmdir_sys -f metro_mpi/flist.system $(WARN) \
+	    --timing --unroll-count 1024 --cc --top-module testharness
+	$(MAKE) -C Vmdir_sys -j"$(BUILD_JOBS)" -f Vtestharness.mk \
+	    CXX=mpic++ LINK=mpic++ LDLIBS=-lsodium OBJCACHE= \
+	    CFG_CXXFLAGS_PCH="-c -x c++-header"
+	mpic++ -std=gnu++20 -fcoroutines -pthread \
+	    -I Vmdir_sys -I "$(VLT_ROOT)/include" -I "$(VLT_ROOT)/include/vltstd" \
+	    -I ../work-vlt/riscv-isa-sim/include -I "$(TB_DIR)" \
+	    -I ../test -I ../test/uartdpi -I metro_mpi \
+	    -c "$(TB_DIR)/verilator_lib.cc" -o verilator_lib.o
+	mpic++ -std=gnu++20 -fcoroutines -pthread \
+	    -I Vmdir_sys -I "$(VLT_ROOT)/include" -I "$(VLT_ROOT)/include/vltstd" \
+	    -I ../work-vlt/riscv-isa-sim/include -I "$(TB_DIR)" \
+	    -I ../test -I ../test/uartdpi -I metro_mpi \
+	    -c "$(RANK0_TB_MAIN)" -o rank0_tb_main.o
+	mpic++ -std=gnu++20 -fcoroutines -pthread \
+	    -I Vmdir_sys -I "$(VLT_ROOT)/include" -I "$(VLT_ROOT)/include/vltstd" \
+	    -I ../work-vlt/riscv-isa-sim/include -I "$(TB_DIR)" \
+	    -I ../test -I ../test/uartdpi -I metro_mpi \
+	    -c metro_mpi/metro_mpi.cpp -o metro_mpi.o
+	mkdir -p bin
+	mpic++ -std=gnu++20 -L ../work-vlt/lib -o bin/occamy_top.mpi.vlt \
+	    rank0_tb_main.o verilator_lib.o metro_mpi.o \
+	    ../work-vlt/tb/common_lib.o ../work-vlt/tb/ipc.o ../work-vlt/tb/bootrom.o \
+	    ../work-vlt/tb/bootdata.o ../work-vlt/tb/uartdpi.o \
+	    ../work-vlt/vlt/verilated.o ../work-vlt/vlt/verilated_dpi.o \
+	    ../work-vlt/vlt/verilated_threads.o ../work-vlt/vlt/verilated_timing.o \
+	    ../work-vlt/vlt/verilated_vcd_c.o \
+	    Vmdir_sys/Vtestharness__ALL.a -lfesvr -lpthread -lsodium
+	cd "$(AUTO_SW_DIR)/metro_mpi"
+	"$(VLT)" --cc --exe --Mdir obj_dir_lib --top-module occamy_cluster_wrapper \
+	    occamy_cluster_wrapper_main.cpp metro_mpi.cpp -f flist.library \
+	    --timing --unroll-count 1024 $(WARN) \
+	    -CFLAGS "-I$(AUTO_SW_DIR)/metro_mpi -std=gnu++20 -fcoroutines"
+	$(MAKE) -C obj_dir_lib -j"$(BUILD_JOBS)" -f Voccamy_cluster_wrapper.mk \
+	    CXX=mpic++ LINK=mpic++ LDLIBS=-lsodium OBJCACHE= \
+	    CFG_CXXFLAGS_PCH="-c -x c++-header"
+
+auto-hello-run: auto-hello-build auto-hello-run-only
+
+auto-hello-run-only:
+	cd "$(SIM)"
+	rm -f uart0.log
+	timeout "$(MPI_HELLO_TIMEOUT)" mpirun \
+	    -np 1 "$(AUTO_SW_DIR)/bin/occamy_top.mpi.vlt" "$(HELLO_ELF)" \
+	    : -np 1 "$(AUTO_SW_DIR)/metro_mpi/obj_dir_lib/Voccamy_cluster_wrapper" \
+	    : -np 1 "$(AUTO_SW_DIR)/metro_mpi/obj_dir_lib/Voccamy_cluster_wrapper" \
+	    : -np 1 "$(AUTO_SW_DIR)/metro_mpi/obj_dir_lib/Voccamy_cluster_wrapper" \
+	    : -np 1 "$(AUTO_SW_DIR)/metro_mpi/obj_dir_lib/Voccamy_cluster_wrapper" \
+	    2>&1 | tee "$(AUTO_SW_DIR)/hello_mpi.log"
+	test "$${PIPESTATUS[0]}" -eq 0
+	grep -q "Hello world!" uart0.log
+	echo "[ok] automatic Metro-MPI hello_world completed"
+
+auto-hello: auto-hello-run
+
+manual-smoke-export: check-tools
+	$(MAKE) -C "$(OCCAMY)" OCCAMY="$(OCCAMY)" VLT="$(VLT)" BENDER="$(BENDER)" rtl flist
+	mkdir -p "$(MANUAL_STRUCT_VIEW_DIR)"
+	cd "$(MANUAL_STRUCT_VIEW_DIR)"
+	"$(VLT)" --cc --mmpi-o1 --d1 --mmpi-out ../design.json \
+	    --top-module occamy_quadrant_s1 -f ../work-mmpi-1x4/files \
+	    --timing --unroll-count 1024 --Mdir Vmdir $(WARN) \
+	    2>&1 | tee export.log
+	test "$${PIPESTATUS[0]}" -eq 0
+	test -f "$(SIM)/design.json"
+	echo "[manual] Paint $(SIM)/design.json into $(SIM)/spec.json, then run manual-smoke-import."
+
+manual-smoke-import: check-tools
+	test -f "$(SIM)/spec.json"
+	mkdir -p "$(MANUAL_STRUCT_IMPORT_DIR)"
+	cd "$(MANUAL_STRUCT_IMPORT_DIR)"
+	"$(VLT)" --cc --mmpi-o1 --d1 --mmpi-in ../spec.json \
+	    --top-module occamy_quadrant_s1 -f ../work-mmpi-1x4/files \
+	    --timing --unroll-count 1024 --Mdir Vmdir $(WARN) \
+	    2>&1 | tee import.log
+	test "$${PIPESTATUS[0]}" -eq 0
+
+manual-smoke: manual-smoke-import
+	$(MAKE) -C "$(OCCAMY)" OCCAMY="$(OCCAMY)" VLT="$(VLT)" BENDER="$(BENDER)" \
+	    PART_DIR="$(MANUAL_STRUCT_IMPORT_DIR)" build-mpi run-mpi \
+	    OCCAMY_MPI_CYCLES="$(MPI_CYCLES)" OBJCACHE= \
+	    CFG_CXXFLAGS_PCH="-c -x c++-header"
+	test -f "$(MANUAL_STRUCT_IMPORT_DIR)/metro_mpi/simulate.log"
+	grep -Eq "Shutting down|Ending Communication|Broadcasting shutdown" \
+	    "$(MANUAL_STRUCT_IMPORT_DIR)/metro_mpi/simulate.log"
+	echo "[ok] manual Metro-MPI structural run completed $(MPI_CYCLES) cycles"
+
+manual-hello-export: mpi-software-build hello-elf
+	mkdir -p "$(MANUAL_SW_VIEW_DIR)"
+	cd "$(MANUAL_SW_VIEW_DIR)"
+	"$(VLT)" --cc --mmpi-o1 --d1 --mmpi-out ../sw_design.json \
+	    --top-module testharness -exe "$(TB_BIN)" -f ../work-vlt/files \
+	    --timing --unroll-count 1024 --Mdir Vmdir $(WARN) \
+	    2>&1 | tee export.log
+	test "$${PIPESTATUS[0]}" -eq 0
+	test -f "$(SIM)/sw_design.json"
+	echo "[manual] Paint $(SIM)/sw_design.json into $(SIM)/sw_spec.json, then run manual-hello-import."
+
+manual-hello-import: mpi-software-build hello-elf
+	test -f "$(SIM)/sw_spec.json"
+	mkdir -p "$(MANUAL_SW_IMPORT_DIR)"
+	cd "$(MANUAL_SW_IMPORT_DIR)"
+	"$(VLT)" --cc --mmpi-o1 --d1 --mmpi-in ../sw_spec.json \
+	    --top-module testharness -exe "$(TB_BIN)" -f ../work-vlt/files \
+	    --timing --unroll-count 1024 --Mdir Vmdir $(WARN) \
+	    2>&1 | tee import.log
+	test "$${PIPESTATUS[0]}" -eq 0
+	echo "[manual] Import generated $(MANUAL_SW_IMPORT_DIR)/metro_mpi."
+
+manual-hello-build: manual-hello-import
+	cd "$(MANUAL_SW_IMPORT_DIR)"
+	"$(VLT)" --Mdir Vmdir_sys -f metro_mpi/flist.system $(WARN) \
+	    --timing --unroll-count 1024 --cc --top-module testharness
+	$(MAKE) -C Vmdir_sys -j"$(BUILD_JOBS)" -f Vtestharness.mk \
+	    CXX=mpic++ LINK=mpic++ LDLIBS=-lsodium OBJCACHE= \
+	    CFG_CXXFLAGS_PCH="-c -x c++-header"
+	mpic++ -std=gnu++20 -fcoroutines -pthread \
+	    -I Vmdir_sys -I "$(VLT_ROOT)/include" -I "$(VLT_ROOT)/include/vltstd" \
+	    -I ../work-vlt/riscv-isa-sim/include -I "$(TB_DIR)" \
+	    -I ../test -I ../test/uartdpi -I metro_mpi \
+	    -c "$(TB_DIR)/verilator_lib.cc" -o verilator_lib.o
+	mpic++ -std=gnu++20 -fcoroutines -pthread \
+	    -I Vmdir_sys -I "$(VLT_ROOT)/include" -I "$(VLT_ROOT)/include/vltstd" \
+	    -I ../work-vlt/riscv-isa-sim/include -I "$(TB_DIR)" \
+	    -I ../test -I ../test/uartdpi -I metro_mpi \
+	    -c "$(RANK0_TB_MAIN)" -o rank0_tb_main.o
+	mpic++ -std=gnu++20 -fcoroutines -pthread \
+	    -I Vmdir_sys -I "$(VLT_ROOT)/include" -I "$(VLT_ROOT)/include/vltstd" \
+	    -I ../work-vlt/riscv-isa-sim/include -I "$(TB_DIR)" \
+	    -I ../test -I ../test/uartdpi -I metro_mpi \
+	    -c metro_mpi/metro_mpi.cpp -o metro_mpi.o
+	mkdir -p bin
+	mpic++ -std=gnu++20 -L ../work-vlt/lib -o bin/occamy_top.mpi.vlt \
+	    rank0_tb_main.o verilator_lib.o metro_mpi.o \
+	    ../work-vlt/tb/common_lib.o ../work-vlt/tb/ipc.o ../work-vlt/tb/bootrom.o \
+	    ../work-vlt/tb/bootdata.o ../work-vlt/tb/uartdpi.o \
+	    ../work-vlt/vlt/verilated.o ../work-vlt/vlt/verilated_dpi.o \
+	    ../work-vlt/vlt/verilated_threads.o ../work-vlt/vlt/verilated_timing.o \
+	    ../work-vlt/vlt/verilated_vcd_c.o \
+	    Vmdir_sys/Vtestharness__ALL.a -lfesvr -lpthread -lsodium
+	cd "$(MANUAL_SW_IMPORT_DIR)/metro_mpi"
+	"$(VLT)" --cc --exe --Mdir obj_dir_lib --top-module occamy_cluster_wrapper \
+	    occamy_cluster_wrapper_main.cpp metro_mpi.cpp -f flist.library \
+	    --timing --unroll-count 1024 $(WARN) \
+	    -CFLAGS "-I$(MANUAL_SW_IMPORT_DIR)/metro_mpi -std=gnu++20 -fcoroutines"
+	$(MAKE) -C obj_dir_lib -j"$(BUILD_JOBS)" -f Voccamy_cluster_wrapper.mk \
+	    CXX=mpic++ LINK=mpic++ LDLIBS=-lsodium OBJCACHE= \
+	    CFG_CXXFLAGS_PCH="-c -x c++-header"
+
+manual-hello-run: manual-hello-build manual-hello-run-only
+
+manual-hello-run-only:
+	cd "$(SIM)"
+	rm -f uart0.log
+	timeout "$(MPI_HELLO_TIMEOUT)" mpirun \
+	    -np 1 "$(MANUAL_SW_IMPORT_DIR)/bin/occamy_top.mpi.vlt" "$(HELLO_ELF)" \
+	    : -np 1 "$(MANUAL_SW_IMPORT_DIR)/metro_mpi/obj_dir_lib/Voccamy_cluster_wrapper" \
+	    : -np 1 "$(MANUAL_SW_IMPORT_DIR)/metro_mpi/obj_dir_lib/Voccamy_cluster_wrapper" \
+	    : -np 1 "$(MANUAL_SW_IMPORT_DIR)/metro_mpi/obj_dir_lib/Voccamy_cluster_wrapper" \
+	    : -np 1 "$(MANUAL_SW_IMPORT_DIR)/metro_mpi/obj_dir_lib/Voccamy_cluster_wrapper" \
+	    2>&1 | tee "$(MANUAL_SW_IMPORT_DIR)/hello_mpi.log"
+	test "$${PIPESTATUS[0]}" -eq 0
+	grep -q "Hello world!" uart0.log
+	echo "[ok] manual Metro-MPI hello_world completed"
+
+manual-hello: manual-hello-run
